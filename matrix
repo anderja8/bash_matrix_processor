@@ -1,0 +1,378 @@
+#!/bin/bash
+#author: Jacob Anderson
+#date: 1/15/2020
+#course: CS344
+#section: 400
+#purpose: Implement matrix functions for determining dimensions,
+#transposing, getting the mean, adding, and multiplying
+
+#Helper function that validates that the arugments passed to any of the functions
+#requiring 0 or 1 arguments is valid. Called by dims, transpose, and mean
+function validateOneMatrix {
+  #Print error message and exit if the number of arguments is greater than 1
+  if [ $# -gt 1 ]
+  then
+    >&2 echo "Error: wrong number of arguments specified in call. Must be 0 or 1 arguments"
+    exit 1
+  fi
+
+  #Print error message and exit if a file was provided but is not readable
+  if [ $# -eq 1 ] &&  [ ! -r ${@} ]
+  then
+    >&2 echo "Error: file specified is unreadable"
+    exit 1
+  fi
+}
+
+#Helper function that validates that the arguments passed to any of the function requiring 2
+#arguments is valid. Called by add and multiply.
+function validateTwoMatrices {
+  #Print an error message and exit if the number of arguments is not equal to 2
+  if [ $# -ne 2 ]
+  then
+    #Pretty sure putting >&2 in front of echo is the accepted way to print to stderr
+    >&2 echo "Error: wrong number of arguments specified in call. Must be 2 arguments."
+    exit 1
+  fi
+
+  #Print an error message and exit if either file is unreadable
+  if [ ! -r $1 ] || [ ! -r $2 ]
+  then
+    >&2 echo "Error: one or more of the arguments is unreadable."
+    exit 1
+  fi
+}
+
+#Function to return the dimensions of a supplied matrix in the form "rows columns". Accepts 1 argument or stdin.
+function dims {
+  #Setting up variables
+  rows=0
+  cols=0
+
+  #Validate the input
+  validateOneMatrix $@
+
+  #Get the file path to read
+  #If 1 argument then cat that to a temp file, otherwise, cat from stdin
+  #Lifted mostly verbatim from the assignment 1 hints section
+  datafilepath="tempfile$$"
+  if [ $# -eq 1 ]
+  then
+    datafilepath=$1
+  else
+    cat > $datafilepath
+  fi
+
+  #Read through each line to get the number of rows
+  rows=$(wc -l < $datafilepath)
+
+  #Read the total number of entries, and divide by the number of rows to get the columns
+  cols=$(($(wc -w < $datafilepath)/$rows))
+
+  #Remove all tempfiles created during the process
+  rm -f tempfile*
+  
+  #Output the results as specified
+  echo "$rows $cols"
+  exit 0
+}
+
+#Function to transpose the supplied matrix. Accepts 1 argument or stdin
+function transpose {
+  #Validate the input
+  validateOneMatrix $@
+  
+  #Get the file path to read
+  #If 1 argument then cat that to a temp file, otherwise, cat from stdin
+  #Lifted mostly verbatim from the assignment 1 hints section
+  datafilepath="tempfile$$"
+  if [ $# -eq 1 ]
+  then
+    datafilepath=$1
+  else
+    cat > $datafilepath
+  fi
+
+  #The idea here is to transpose each row in the input matrix into a tempfile column
+  #Then the transposed matrix, so far, can be pasted with the newly generated column
+  #Unfortunately, paste file1 file2 > file1 will delete the contents of file1 before pasting,
+  #so I had to use two source files.
+  #I.E. paste file1 file2 > file3
+  #     cp file3 file1
+  touch tempfile$$_dest
+  while read matLine
+  do
+    for i in $matLine
+    do
+      echo $i >> tempfile$$_source_2
+    done
+    
+    #If this is the first row, treat it special and don't paste
+    if [ $(wc -w < tempfile$$_dest) -eq 0 ]
+    then
+      cp tempfile$$_source_2 tempfile$$_dest
+    else
+      paste tempfile$$_source_1 tempfile$$_source_2 > tempfile$$_dest
+    fi
+    cp tempfile$$_dest tempfile$$_source_1
+    rm -f tempfile$$_source_2
+  done < $datafilepath
+ 
+  #Output the results as specified
+  cat tempfile$$_dest
+ 
+  #Remove any tempfiles created during the process
+  rm -f tempfile*
+ 
+  exit 0
+}
+
+#Function to get a mean vector for the supplied matrix. Accepts 1 argument or stdin.
+function mean {
+  #Validate the input
+  validateOneMatrix $@
+
+  #Get the file path to read
+  #If 1 argument then cat that to a temp file, otherwise, cat from stdin
+  #Lifted mostly verbatim from the assignment 1 hints section
+  datafilepath="tempfile$$"
+  if [ $# -eq 1 ]
+  then
+    datafilepath=$1
+  else
+    cat > $datafilepath
+  fi
+
+  #Getting the matrix dimensions, this is basically a dims call without the fluff.
+  rows=$(wc -l < $datafilepath)
+  cols=$(($(wc -w < $datafilepath)/$rows))
+
+  #The idea here is to read each value of the matrix into an array
+  numArr=()
+  while read matLine
+  do
+    for i in $matLine
+    do
+      numArr+=($i)
+    done
+  done < $datafilepath
+
+  #Setting up a tempfile to hold the output
+  touch tempfile$$_out
+
+  #Now, we'll loop through the array, getting the mean
+  for ((j=0;j<$cols;j++))
+  do
+    #If this isn't the first loop, add a tab to our output
+    if [ $j -ne 0 ]
+    then
+      echo -n "	" >> tempfile$$_out
+    fi
+
+    mean=0
+    
+    #looping through each value in column j
+    for ((i=j;i<$(($rows*$cols));i+=cols))
+    do
+      mean=$(($mean+${numArr[$i]}))
+    done
+    
+    #Debugging line
+    #echo mean%rows=$(($mean%$rows))   mean=$mean   rows/2= $(($rows/2))   rows=$rows
+ 
+    #Some fancy logic here to make sure the rounding behaves as described.
+    #The idea is to check whether the absolute value of the remainder is greater than number of rows / 2.
+    #If it is, round away from zero. Otherwise, let the mean get trunced.
+    if [ $(($mean % $rows)) -ge $(($rows/2)) ] && [ $mean -ge 0 ]
+    then
+      mean=$(($mean / $rows + 1))
+    elif [ $((-1 * $mean % $rows)) -ge $(($rows/2)) ] && [ $mean -lt 0 ]
+    then
+      mean=$(($mean / $rows - 1))
+    else
+      mean=$(($mean / $rows))
+    fi
+    
+    #Append the final mean value to our output file
+    echo -n $mean >> tempfile$$_out
+  done
+
+  #Adding a new line to the end of the file and outputting the result
+  echo "" >> tempfile$$_out
+  cat tempfile$$_out
+
+  #Remove any tempfiles created during the process
+  rm -f tempfile*
+ 
+  exit 0
+}
+
+#Function to add two matrices of the same dimensions. Accepts two arguments only.
+function add {
+  #Validate that the arguments are valid
+  validateTwoMatrices $@
+
+  #Verify that the matrix dimensions are the same
+  mat1Path=$1
+  mat2Path=$2
+  mat1Rows=$(wc -l < $1)
+  mat1Cols=$(($(wc -w < $1)/$mat1Rows))
+  mat2Rows=$(wc -l < $2)
+  mat2Cols=$(($(wc -w < $2)/$mat2Rows))
+
+  if [ $mat1Rows -ne $mat2Rows ] || [ $mat1Cols -ne $mat2Cols ]
+  then
+    >&2 echo "Error: matrix dimensions must be the same in order to add them."
+    exit 1
+  fi
+
+  #Now, putting the first matrix into an array.
+  mat1Arr=()
+  while read matLine
+  do
+    for i in $matLine
+    do
+      mat1Arr+=($i)
+    done
+  done < $1
+
+  #Moving through the second matrix, add it's values with the first array at the same positions
+  #and put into a sum array.
+  j=0
+  sumArr=()
+  while read matLine
+  do
+    for i in $matLine
+    do
+      sumArr+=($(($i+${mat1Arr[$j]})))
+      j=$((j+1))
+    done
+  done < $2
+ 
+  #Now, sumArr contains the summed values. Printing back out to a tempfile.
+  touch tempfile$$_out
+  for ((i=0;i<$mat1Rows;i++))
+  do
+    for ((j=0;j<$mat1Cols;j++))
+    do
+      if [ $j -ne 0 ]
+      then
+        echo -n "	" >> tempfile$$_out
+      fi
+      echo -n ${sumArr[$(($j+$i*$mat1Cols))]} >> tempfile$$_out
+    done
+    echo "" >> tempfile$$_out
+  done
+
+  #Outputting the result
+  cat tempfile$$_out
+
+  #Remove any tempfiles created during the process
+  rm -f tempfile*
+  exit 0
+}
+
+#Function to implement matrix multiplication. Accepts two arguments only.
+function multiply {
+  #Validate that the arguments are valid
+  validateTwoMatrices $@
+
+  #Verify that the matrix dimensions allow for multiplication (#columns in matrix 1 == #rows in mtrix 2)
+  mat1Path=$1
+  mat2Path=$2
+  mat1Rows=$(wc -l < $1)
+  mat1Cols=$(($(wc -w < $1)/$mat1Rows))
+  mat2Rows=$(wc -l < $2)
+  mat2Cols=$(($(wc -w < $2)/$mat2Rows))
+
+  if [ $mat1Cols -ne $mat2Rows ]
+  then
+    >&2 echo "Error: the number of columns in the first matrix must match the number of rows in the second matrix."
+    exit 1
+  fi
+
+  #Now, putting each matrix into an array
+  mat1Arr=()
+  while read matLine
+  do
+    for i in $matLine
+    do
+      mat1Arr+=($i)
+    done
+  done < $1
+
+  mat2Arr=()
+  while read matLine
+  do
+    for i in $matLine
+    do
+      mat2Arr+=($i)
+    done
+  done < $2
+
+  #Next, running three loops to do the multiplication. Because the arrays are 1D but represent 2D matrices, the
+  #calculation for the correct indeces gets a little hairy.
+  mulArr=()
+  for ((i=0;i<$mat1Rows;i++))
+  do
+    for ((j=0;j<$mat2Cols;j++))
+    do
+      mulVal=0
+      for ((k=0;k<mat1Cols;k++))
+      do
+        mulVal=$(($mulVal+$((${mat1Arr[$(($i*$mat1Cols+$k))]}*${mat2Arr[$(($j+$k*$mat2Cols))]}))))
+        
+        #Debugging lines. It took a lot of tweaking to wrap my head around the logic.
+        #echo -n mat1idx=$(($i*$mat1Cols+$k)). mat1Val = ${mat1Arr[$(($i*$mat1Cols+$k))]}." " 
+        #echo mat2idx=$(($j+$k*$mat2Cols)). mat2Val= ${mat2Arr[$(($j+$k*$mat2Cols))]}
+      done
+      #Add the final multiplied value to the output array
+      mulArr+=($mulVal)
+    done
+  done
+
+  #Now, mulArr contains the multiplied values. Printing back out to the screen.
+  touch tempfile$$_out
+  for ((i=0;i<$mat1Rows;i++))
+  do
+    for ((j=0;j<$mat2Cols;j++))
+    do
+      #special handling to not put a tab before the far left values are addedd to the tempfile
+      if [ $j -ne 0 ]
+      then
+        echo -n "	" >> tempfile$$_out
+      fi
+      echo -n ${mulArr[$(($j+$i*$mat2Cols))]} >> tempfile$$_out
+    done
+    #adding a new line for the next row
+    echo "" >> tempfile$$_out
+  done
+
+  #Outputting the result
+  cat tempfile$$_out
+
+  #Remove any tempfiles created during the process
+  rm -f tempfile*
+  exit 0
+}
+
+#Function to handle interrupt, hangup, and terminate signals as specified
+function handleSigs {
+  rm -f tempfile*
+  >&2 echo "Error: interupt, hangup, or terminate signal recieved. All tempfiles removed and program execution stopped."
+  exit 1
+}
+
+#Trapping signals and sending them to handle sigs
+trap handleSigs SIGINT SIGHUP SIGTERM
+
+#Verify that the first argument is one of my allowed functions (dims, transpose, mean, add, multiply)
+if [ $1 != "dims" ] && [ $1 != "transpose" ] && [ $1 != "mean" ] && [ $1 != "add" ] && [ $1 != "multiply" ]
+then
+  >&2 echo "Error: command" $1 "not found. Only dims, transpose, mean, add, and multiply are allowed and must be lower case."
+  exit 1
+fi
+
+#Where the magic happens, attempt to run a function named the first argument,
+#pass this function the remaining arguments
+$1 "${@:2}"
